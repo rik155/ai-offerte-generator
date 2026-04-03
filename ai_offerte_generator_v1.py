@@ -30,21 +30,45 @@ STYLE_PRESETS = {
     "Ambacht": {"accent": "#166534"},
 }
 SNEL_TEMPLATES = {
-    "Leeg starten": {"klus_type": "", "beschrijving": "", "stijl": None},
-    "Schilderwerk": {
-        "klus_type": "Schilderwerk",
-        "beschrijving": "Voorbereiden van de ondergrond, schuren, gronden en netjes aflakken van de afgesproken onderdelen.",
-        "stijl": "Ambacht",
+    "Leeg starten": {
+        "klus_type": "",
+        "beschrijving": "",
+        "stijl": None,
     },
-    "Klusbedrijf": {
-        "klus_type": "Algemene kluswerkzaamheden",
-        "beschrijving": "Uitvoeren van de afgesproken herstel- en montagewerkzaamheden, inclusief nette oplevering.",
+    "Diensten algemeen": {
+        "klus_type": "Dienstverlening",
+        "beschrijving": "Uitvoering van de afgesproken werkzaamheden conform planning en met zorg voor een nette oplevering.",
         "stijl": "Modern",
     },
-    "Schoonmaak": {
-        "klus_type": "Schoonmaakwerkzaamheden",
-        "beschrijving": "Uitvoeren van de afgesproken schoonmaakwerkzaamheden volgens planning en met zorg voor nette oplevering.",
+    "Onderhoud en reparatie": {
+        "klus_type": "Onderhoud en reparatie",
+        "beschrijving": "Uitvoeren van de afgesproken onderhouds- en herstelwerkzaamheden inclusief controle en nette oplevering.",
+        "stijl": "Ambacht",
+    },
+    "Advies en consultancy": {
+        "klus_type": "Advieswerkzaamheden",
+        "beschrijving": "Levering van advies en begeleiding op basis van de afgesproken scope, planning en gewenste resultaten.",
         "stijl": "Minimal",
+    },
+    "Creatief en media": {
+        "klus_type": "Creatieve werkzaamheden",
+        "beschrijving": "Uitwerken en opleveren van de afgesproken creatieve werkzaamheden volgens briefing en planning.",
+        "stijl": "Klassiek",
+    },
+    "Schoonmaak en facilitair": {
+        "klus_type": "Schoonmaakwerkzaamheden",
+        "beschrijving": "Uitvoeren van de afgesproken schoonmaak- of facilitaire werkzaamheden volgens planning en kwaliteitseisen.",
+        "stijl": "Minimal",
+    },
+    "Techniek en installatie": {
+        "klus_type": "Technische werkzaamheden",
+        "beschrijving": "Uitvoeren van de afgesproken technische of installatiewerkzaamheden inclusief controle en oplevering.",
+        "stijl": "Donker",
+    },
+    "Bouw en afwerking": {
+        "klus_type": "Bouw- en afbouwwerkzaamheden",
+        "beschrijving": "Uitvoeren van de afgesproken bouw-, afbouw- of afwerkingswerkzaamheden volgens planning en afspraak.",
+        "stijl": "Ambacht",
     },
 }
 USER_DATA_DIR.mkdir(exist_ok=True)
@@ -517,13 +541,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("📄 AI Offerte Generator Pro v10")
+st.title("📄 Offerte Generator v11")
 st.write(f"Ingelogd als: {user_email}")
-st.write("Sneller werken met templates, opgeslagen klanten en professionelere offertetekst.")
+st.write("Sneller werken met brede templates, opgeslagen klanten en professionelere offertetekst voor veel verschillende soorten bedrijven.")
 
 with st.sidebar:
     st.subheader("Snel starten")
-    template_keuze = st.selectbox("Kies een snelle template", list(SNEL_TEMPLATES.keys()))
+    template_keuze = st.selectbox("Kies een template", list(SNEL_TEMPLATES.keys()))
     st.subheader("Stijl")
     stijl_keys = list(STYLE_PRESETS.keys())
     opgeslagen_stijl = config.get("offerte_stijl", "Modern")
@@ -543,9 +567,9 @@ with st.sidebar:
     if OPENAI_AVAILABLE and os.getenv("OPENAI_API_KEY"):
         st.success("OpenAI actief")
     elif OPENAI_AVAILABLE:
-        st.warning("OpenAI package gevonden, maar geen API key. Template wordt gebruikt.")
+        st.warning("OpenAI package gevonden, maar geen API key. Standaardtekst wordt gebruikt.")
     else:
-        st.warning("OpenAI package niet gevonden. Template wordt gebruikt.")
+        st.warning("OpenAI package niet gevonden. Standaardtekst wordt gebruikt.")
 
 voorgeselecteerde_klus = SNEL_TEMPLATES.get(template_keuze, {}).get("klus_type", "")
 voorgeselecteerde_beschrijving = SNEL_TEMPLATES.get(template_keuze, {}).get("beschrijving", "")
