@@ -29,6 +29,24 @@ STYLE_PRESETS = {
     "Donker": {"accent": "#38bdf8"},
     "Ambacht": {"accent": "#166534"},
 }
+SNEL_TEMPLATES = {
+    "Leeg starten": {"klus_type": "", "beschrijving": "", "stijl": None},
+    "Schilderwerk": {
+        "klus_type": "Schilderwerk",
+        "beschrijving": "Voorbereiden van de ondergrond, schuren, gronden en netjes aflakken van de afgesproken onderdelen.",
+        "stijl": "Ambacht",
+    },
+    "Klusbedrijf": {
+        "klus_type": "Algemene kluswerkzaamheden",
+        "beschrijving": "Uitvoeren van de afgesproken herstel- en montagewerkzaamheden, inclusief nette oplevering.",
+        "stijl": "Modern",
+    },
+    "Schoonmaak": {
+        "klus_type": "Schoonmaakwerkzaamheden",
+        "beschrijving": "Uitvoeren van de afgesproken schoonmaakwerkzaamheden volgens planning en met zorg voor nette oplevering.",
+        "stijl": "Minimal",
+    },
+}
 USER_DATA_DIR.mkdir(exist_ok=True)
 
 
@@ -64,6 +82,56 @@ def get_user_config_path(email: str) -> Path:
     return USER_DATA_DIR / f"{make_user_key(email)}_config.json"
 
 
+def get_user_customers_path(email: str) -> Path:
+    return USER_DATA_DIR / f"{make_user_key(email)}_customers.json"
+
+
+def load_json_file(path: Path, fallback):
+    if not path.exists():
+        return fallback
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return fallback
+
+
+def save_json_file(path: Path, data) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_customers(email: str) -> list[dict]:
+    data = load_json_file(get_user_customers_path(email), [])
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def save_customers(email: str, customers: list[dict]) -> None:
+    save_json_file(get_user_customers_path(email), customers)
+
+
+def find_customer(customers: list[dict], naam: str) -> dict | None:
+    for klant in customers:
+        if klant.get("naam", "").strip().lower() == naam.strip().lower():
+            return klant
+    return None
+
+
+def upsert_customer(email: str, naam: str, gegevens: str) -> None:
+    naam = naam.strip()
+    gegevens = gegevens.strip()
+    if not naam:
+        return
+    customers = load_customers(email)
+    bestaand = find_customer(customers, naam)
+    if bestaand:
+        bestaand["gegevens"] = gegevens
+    else:
+        customers.append({"naam": naam, "gegevens": gegevens})
+    customers = sorted(customers, key=lambda x: x.get("naam", "").lower())
+    save_customers(email, customers)
+
+
 def load_config(email: str) -> dict:
     standaard = {
         "bedrijfsnaam": "",
@@ -72,6 +140,8 @@ def load_config(email: str) -> dict:
         "btw_id": "",
         "accentkleur": "#1d4ed8",
         "offerte_stijl": "Modern",
+        "standaard_geldigheid": 14,
+        "standaard_betaaltermijn": 14,
     }
     pad = get_user_config_path(email)
     if not pad.exists():
@@ -141,6 +211,7 @@ def auth_screen() -> bool:
                 users[email] = {"password_hash": hash_password(reg_password), "role": "user"}
                 save_users(users)
                 save_config(email, load_config(email))
+                save_customers(email, [])
                 st.success("Account aangemaakt. Log nu in.")
 
     return False
@@ -169,6 +240,29 @@ def bereken_prijzen(subtotaal_input: str, btw_percentage: str) -> dict:
         "btw_bedrag_format": euro_bedrag(btw_bedrag),
         "totaal_format": euro_bedrag(totaal),
     }
+
+
+def professionele_intro(stijl: str) -> str:
+    intros = {
+        "Modern": "Bedankt voor uw aanvraag. Hieronder vindt u onze duidelijke en professionele offerte.",
+        "Klassiek": "Naar aanleiding van uw aanvraag doen wij u hierbij graag de volgende offerte toekomen.",
+        "Minimal": "Hierbij ontvangt u onze offerte voor de gevraagde werkzaamheden.",
+        "Donker": "Dank voor uw aanvraag. Hieronder staat onze offerte overzichtelijk samengevat.",
+        "Ambacht": "Bedankt voor uw aanvraag. Met plezier sturen wij u onze offerte voor deze werkzaamheden.",
+    }
+    return intros.get(stijl, intros["Modern"])
+
+
+def professionele_afsluiting(bedrijfsnaam: str) -> str:
+    return dedent(
+        f"""
+        Wij vertrouwen erop u hiermee een passende aanbieding te hebben gedaan.
+        Bij akkoord ontvangen wij graag uw bevestiging. Voor vragen kunt u altijd contact met ons opnemen.
+
+        Met vriendelijke groet,
+        {bedrijfsnaam}
+        """
+    ).strip()
 
 
 def valideer(data: dict) -> list[str]:
@@ -217,7 +311,15 @@ def maak_prompt(data: dict) -> str:
         - Geldigheid: {data['geldigheid']} dagen
         - Betaaltermijn: {data['betaaltermijn']} dagen
 
-        Houd het compact zodat het geschikt blijft voor een A4-PDF.
+        Structuur:
+        1. Titel OFFERTE
+        2. Zakelijke inleiding
+        3. Werkzaamheden
+        4. Prijsopgave
+        5. Geldigheid en betaaltermijn
+        6. Professionele afsluiting
+
+        Houd het compact, zakelijk en direct bruikbaar voor een klant.
         Gebruik platte tekst zonder markdown.
         """
     ).strip()
@@ -230,13 +332,8 @@ def fallback_offerte(data: dict) -> str:
     else:
         klantblok = data["klantnaam"]
     btw_regel = f"Btw-id: {data['btw_id']}" if data["btw_id"].strip() else ""
-    intro = {
-        "Modern": "Bedankt voor uw aanvraag. Hieronder vindt u onze heldere en professionele prijsopgave.",
-        "Klassiek": "Naar aanleiding van uw aanvraag doen wij u hierbij graag de volgende offerte toekomen.",
-        "Minimal": "Hierbij ontvangt u onze offerte voor de gevraagde werkzaamheden.",
-        "Donker": "Dank voor uw aanvraag. Hieronder staat onze complete offerte overzichtelijk samengevat.",
-        "Ambacht": "Bedankt voor uw aanvraag. Met plezier sturen wij u onze offerte voor deze werkzaamheden.",
-    }.get(data["offerte_stijl"], "Hierbij ontvangt u onze offerte.")
+    intro = professionele_intro(data["offerte_stijl"])
+    afsluiting = professionele_afsluiting(data["bedrijfsnaam"])
     return dedent(
         f"""
         OFFERTE
@@ -268,14 +365,11 @@ def fallback_offerte(data: dict) -> str:
         BTW ({data['btw_percentage']}%): {data['btw_bedrag_format']}
         Totaal inclusief btw: {data['totaal_format']}
 
-        GELDIGHEID
+        GELDIGHEID EN BETAALTERMIJN
         Deze offerte is geldig gedurende {data['geldigheid']} dagen na offertedatum.
+        Betaaltermijn: {data['betaaltermijn']} dagen.
 
-        BETAALTERMIJN
-        Betaling binnen {data['betaaltermijn']} dagen na uitvoering of conform afspraak.
-
-        Met vriendelijke groet,
-        {data['bedrijfsnaam']}
+        {afsluiting}
         """
     ).strip()
 
@@ -292,7 +386,7 @@ def genereer_offerte(data: dict) -> str:
         return fallback_offerte(data)
 
 
-def maak_pdf(bestandsnaam: str, data: dict, logo_bytes: bytes | None = None) -> None:
+def maak_pdf(bestandsnaam: str, data: dict, offerte_tekst: str, logo_bytes: bytes | None = None) -> None:
     stijl = get_style_config(data["offerte_stijl"], data["accentkleur"])
     doc = SimpleDocTemplate(bestandsnaam, pagesize=A4, rightMargin=34, leftMargin=34, topMargin=34, bottomMargin=34)
     styles = getSampleStyleSheet()
@@ -312,7 +406,7 @@ def maak_pdf(bestandsnaam: str, data: dict, logo_bytes: bytes | None = None) -> 
             pass
 
     story.append(Paragraph("OFFERTE", titel))
-    story.append(Paragraph(f"Offertenummer: {data['offertenummer']} | Datum: {data['datum']} | Stijl: {data['offerte_stijl']}", subtitel))
+    story.append(Paragraph(f"Offertenummer: {data['offertenummer']} | Datum: {data['datum']}", subtitel))
 
     klant_html = data["klantnaam"]
     if data["klantgegevens"].strip():
@@ -379,6 +473,13 @@ def test_style_config() -> None:
     assert stijl["accent"] == "#7c2d12"
 
 
+def test_customer_store() -> None:
+    email = "test@example.com"
+    upsert_customer(email, "Jan Jansen", "Straat 1")
+    klanten = load_customers(email)
+    assert any(k["naam"] == "Jan Jansen" for k in klanten)
+
+
 def test_valideer() -> None:
     data = {"bedrijfsnaam": "Test", "bedrijfsgegevens": "Straat 1", "kvk_nummer": "12345678", "klantnaam": "Jan", "klus_type": "Schilderwerk", "beschrijving": "Muren schilderen", "prijs": "1000", "btw_percentage": "21"}
     assert valideer(data) == []
@@ -391,6 +492,7 @@ def run_tests() -> None:
     test_euro_bedrag()
     test_bereken_prijzen()
     test_style_config()
+    test_customer_store()
     test_valideer()
 
 
@@ -402,26 +504,31 @@ if not auth_screen():
 
 user_email = st.session_state["user_email"]
 config = load_config(user_email)
+klanten = load_customers(user_email)
+klant_namen = [k["naam"] for k in klanten]
 
 st.markdown(
     """
     <style>
-    .block-container {padding-top: 1.6rem; padding-bottom: 2rem;}
+    .block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
     .stDownloadButton button, .stButton button {border-radius: 12px; font-weight: 600;}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("📄 AI Offerte Generator Pro v9")
+st.title("📄 AI Offerte Generator Pro v10")
 st.write(f"Ingelogd als: {user_email}")
-st.write("Elke gebruiker heeft nu een eigen login en eigen opgeslagen bedrijfsprofiel.")
+st.write("Sneller werken met templates, opgeslagen klanten en professionelere offertetekst.")
 
 with st.sidebar:
+    st.subheader("Snel starten")
+    template_keuze = st.selectbox("Kies een snelle template", list(SNEL_TEMPLATES.keys()))
     st.subheader("Stijl")
     stijl_keys = list(STYLE_PRESETS.keys())
-    default_style = config.get("offerte_stijl", "Modern")
-    default_index = stijl_keys.index(default_style) if default_style in stijl_keys else 0
+    opgeslagen_stijl = config.get("offerte_stijl", "Modern")
+    voorgestelde_stijl = SNEL_TEMPLATES.get(template_keuze, {}).get("stijl") or opgeslagen_stijl
+    default_index = stijl_keys.index(voorgestelde_stijl) if voorgestelde_stijl in stijl_keys else 0
     offerte_stijl = st.selectbox("Kies offerte stijl", stijl_keys, index=default_index)
     standaard_accent = get_style_config(offerte_stijl)["accent"]
     accentkleur = st.color_picker("Accentkleur", config.get("accentkleur", standaard_accent))
@@ -440,6 +547,11 @@ with st.sidebar:
     else:
         st.warning("OpenAI package niet gevonden. Template wordt gebruikt.")
 
+voorgeselecteerde_klus = SNEL_TEMPLATES.get(template_keuze, {}).get("klus_type", "")
+voorgeselecteerde_beschrijving = SNEL_TEMPLATES.get(template_keuze, {}).get("beschrijving", "")
+gekozen_klant = st.selectbox("Kies opgeslagen klant (optioneel)", ["Nieuwe klant"] + klant_namen)
+klant_defaults = find_customer(klanten, gekozen_klant) if gekozen_klant != "Nieuwe klant" else None
+
 with st.form("offerte_form"):
     st.subheader("Bedrijfsgegevens")
     bedrijfsnaam = st.text_input("Bedrijfsnaam", value=config.get("bedrijfsnaam", ""), placeholder="Bijv. Fokke Schilderwerken")
@@ -451,31 +563,36 @@ with st.form("offerte_form"):
         btw_id = st.text_input("Btw-id", value=config.get("btw_id", ""), placeholder="Bijv. NL001234567B01")
 
     st.subheader("Klant")
-    klantnaam = st.text_input("Klantnaam", placeholder="Bijv. Jan Jansen")
-    klantgegevens = st.text_area("Klantgegevens (optioneel)", placeholder="Straatnaam 5\n1234 AB Utrecht", height=90)
+    klantnaam = st.text_input("Klantnaam", value=klant_defaults.get("naam", "") if klant_defaults else "", placeholder="Bijv. Jan Jansen")
+    klantgegevens = st.text_area("Klantgegevens (optioneel)", value=klant_defaults.get("gegevens", "") if klant_defaults else "", placeholder="Straatnaam 5\n1234 AB Utrecht", height=90)
+    klant_opslaan = st.checkbox("Sla deze klant op voor later", value=bool(klant_defaults))
 
     st.subheader("Klus")
-    klus_type = st.text_input("Type klus", placeholder="Bijv. Buiten schilderwerk")
-    beschrijving = st.text_area("Beschrijving werkzaamheden", placeholder="Bijv. Schuren, gronden en aflakken van kozijnen en voordeur.", height=120)
+    klus_type = st.text_input("Type klus", value=voorgeselecteerde_klus, placeholder="Bijv. Buiten schilderwerk")
+    beschrijving = st.text_area("Beschrijving werkzaamheden", value=voorgeselecteerde_beschrijving, placeholder="Bijv. Schuren, gronden en aflakken van kozijnen en voordeur.", height=120)
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         prijs = st.text_input("Subtotaal in euro", placeholder="Bijv. 1250 of 1250,50")
-        geldigheid = st.number_input("Geldigheid in dagen", min_value=1, value=14, step=1)
     with c2:
-        btw_percentage = st.selectbox("BTW-percentage", ["21", "9", "0"], index=0)
-        betaaltermijn = st.number_input("Betaaltermijn in dagen", min_value=1, value=14, step=1)
+        geldigheid = st.number_input("Geldigheid in dagen", min_value=1, value=int(config.get("standaard_geldigheid", 14)), step=1)
+    with c3:
+        betaaltermijn = st.number_input("Betaaltermijn in dagen", min_value=1, value=int(config.get("standaard_betaaltermijn", 14)), step=1)
+
+    btw_percentage = st.selectbox("BTW-percentage", ["21", "9", "0"], index=0)
 
     submitted = st.form_submit_button("✨ Genereer professionele offerte", use_container_width=True)
 
 if save_profile:
     save_config(user_email, {
-        "bedrijfsnaam": bedrijfsnaam,
-        "bedrijfsgegevens": bedrijfsgegevens,
-        "kvk_nummer": kvk_nummer,
-        "btw_id": btw_id,
+        "bedrijfsnaam": config.get("bedrijfsnaam", ""),
+        "bedrijfsgegevens": config.get("bedrijfsgegevens", ""),
+        "kvk_nummer": config.get("kvk_nummer", ""),
+        "btw_id": config.get("btw_id", ""),
         "accentkleur": accentkleur,
         "offerte_stijl": offerte_stijl,
+        "standaard_geldigheid": int(config.get("standaard_geldigheid", 14)),
+        "standaard_betaaltermijn": int(config.get("standaard_betaaltermijn", 14)),
     })
     st.sidebar.success("Bedrijfsprofiel opgeslagen voor jouw account.")
 
@@ -510,6 +627,19 @@ if submitted:
         for fout in fouten:
             st.error(fout)
     else:
+        if klant_opslaan:
+            upsert_customer(user_email, klantnaam, klantgegevens)
+        save_config(user_email, {
+            "bedrijfsnaam": bedrijfsnaam,
+            "bedrijfsgegevens": bedrijfsgegevens,
+            "kvk_nummer": kvk_nummer,
+            "btw_id": btw_id,
+            "accentkleur": accentkleur,
+            "offerte_stijl": offerte_stijl,
+            "standaard_geldigheid": int(geldigheid),
+            "standaard_betaaltermijn": int(betaaltermijn),
+        })
+
         offerte = genereer_offerte(data)
         txt_bestand = f"offerte_{klantnaam.strip().lower().replace(' ', '_') or 'klant'}.txt"
         pdf_bestand = txt_bestand.replace('.txt', '.pdf')
@@ -517,21 +647,16 @@ if submitted:
 
         with open(txt_bestand, "w", encoding="utf-8") as f:
             f.write(offerte)
-        maak_pdf(pdf_bestand, data, logo_bytes=logo_bytes)
+        maak_pdf(pdf_bestand, data, offerte, logo_bytes=logo_bytes)
 
-        st.success("Offerte gegenereerd.")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Stijl", offerte_stijl)
-        m2.metric("Subtotaal", data["subtotaal_format"])
-        m3.metric("BTW", f"{btw_percentage}%")
-        m4.metric("Totaal", data["totaal_format"])
+        st.success("Offerte gegenereerd en klaar om te downloaden.")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Stijl", offerte_stijl)
+        c2.metric("Subtotaal", data["subtotaal_format"])
+        c3.metric("BTW", f"{btw_percentage}%")
+        c4.metric("Totaal", data["totaal_format"])
         st.download_button("⬇️ Download als TXT", data=offerte, file_name=txt_bestand, mime="text/plain", use_container_width=True)
         with open(pdf_bestand, "rb") as f:
             st.download_button("⬇️ Download als PDF", data=f.read(), file_name=pdf_bestand, mime="application/pdf", use_container_width=True)
-        with st.expander("Toon platte tekst"):
-            st.text_area("Offerte tekst", offerte, height=220)
-
-st.divider()
-st.caption("Lokaal starten: python -m streamlit run ai_offerte_generator_v1.py")
-st.caption("Voor AI op hosting: zet environment variable OPENAI_API_KEY")
-st.caption("Optioneel admin-account: zet ADMIN_EMAIL en ADMIN_PASSWORD")
+        with st.expander("Toon offerte tekst"):
+            st.text_area("Offerte tekst", offerte, height=240)
