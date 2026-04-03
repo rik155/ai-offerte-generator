@@ -30,46 +30,14 @@ STYLE_PRESETS = {
     "Ambacht": {"accent": "#166534"},
 }
 SNEL_TEMPLATES = {
-    "Leeg starten": {
-        "klus_type": "",
-        "beschrijving": "",
-        "stijl": None,
-    },
-    "Diensten algemeen": {
-        "klus_type": "Dienstverlening",
-        "beschrijving": "Uitvoering van de afgesproken werkzaamheden conform planning en met zorg voor een nette oplevering.",
-        "stijl": "Modern",
-    },
-    "Onderhoud en reparatie": {
-        "klus_type": "Onderhoud en reparatie",
-        "beschrijving": "Uitvoeren van de afgesproken onderhouds- en herstelwerkzaamheden inclusief controle en nette oplevering.",
-        "stijl": "Ambacht",
-    },
-    "Advies en consultancy": {
-        "klus_type": "Advieswerkzaamheden",
-        "beschrijving": "Levering van advies en begeleiding op basis van de afgesproken scope, planning en gewenste resultaten.",
-        "stijl": "Minimal",
-    },
-    "Creatief en media": {
-        "klus_type": "Creatieve werkzaamheden",
-        "beschrijving": "Uitwerken en opleveren van de afgesproken creatieve werkzaamheden volgens briefing en planning.",
-        "stijl": "Klassiek",
-    },
-    "Schoonmaak en facilitair": {
-        "klus_type": "Schoonmaakwerkzaamheden",
-        "beschrijving": "Uitvoeren van de afgesproken schoonmaak- of facilitaire werkzaamheden volgens planning en kwaliteitseisen.",
-        "stijl": "Minimal",
-    },
-    "Techniek en installatie": {
-        "klus_type": "Technische werkzaamheden",
-        "beschrijving": "Uitvoeren van de afgesproken technische of installatiewerkzaamheden inclusief controle en oplevering.",
-        "stijl": "Donker",
-    },
-    "Bouw en afwerking": {
-        "klus_type": "Bouw- en afbouwwerkzaamheden",
-        "beschrijving": "Uitvoeren van de afgesproken bouw-, afbouw- of afwerkingswerkzaamheden volgens planning en afspraak.",
-        "stijl": "Ambacht",
-    },
+    "Leeg starten": {"klus_type": "", "beschrijving": "", "stijl": None},
+    "Diensten algemeen": {"klus_type": "Dienstverlening", "beschrijving": "Uitvoering van de afgesproken werkzaamheden conform planning en met zorg voor een nette oplevering.", "stijl": "Modern"},
+    "Onderhoud en reparatie": {"klus_type": "Onderhoud en reparatie", "beschrijving": "Uitvoeren van de afgesproken onderhouds- en herstelwerkzaamheden inclusief controle en nette oplevering.", "stijl": "Ambacht"},
+    "Advies en consultancy": {"klus_type": "Advieswerkzaamheden", "beschrijving": "Levering van advies en begeleiding op basis van de afgesproken scope, planning en gewenste resultaten.", "stijl": "Minimal"},
+    "Creatief en media": {"klus_type": "Creatieve werkzaamheden", "beschrijving": "Uitwerken en opleveren van de afgesproken creatieve werkzaamheden volgens briefing en planning.", "stijl": "Klassiek"},
+    "Schoonmaak en facilitair": {"klus_type": "Schoonmaakwerkzaamheden", "beschrijving": "Uitvoeren van de afgesproken schoonmaak- of facilitaire werkzaamheden volgens planning en kwaliteitseisen.", "stijl": "Minimal"},
+    "Techniek en installatie": {"klus_type": "Technische werkzaamheden", "beschrijving": "Uitvoeren van de afgesproken technische of installatiewerkzaamheden inclusief controle en oplevering.", "stijl": "Donker"},
+    "Bouw en afwerking": {"klus_type": "Bouw- en afbouwwerkzaamheden", "beschrijving": "Uitvoeren van de afgesproken bouw-, afbouw- of afwerkingswerkzaamheden volgens planning en afspraak.", "stijl": "Ambacht"},
 }
 USER_DATA_DIR.mkdir(exist_ok=True)
 
@@ -110,6 +78,10 @@ def get_user_customers_path(email: str) -> Path:
     return USER_DATA_DIR / f"{make_user_key(email)}_customers.json"
 
 
+def get_user_quotes_path(email: str) -> Path:
+    return USER_DATA_DIR / f"{make_user_key(email)}_quotes.json"
+
+
 def load_json_file(path: Path, fallback):
     if not path.exists():
         return fallback
@@ -125,13 +97,27 @@ def save_json_file(path: Path, data) -> None:
 
 def load_customers(email: str) -> list[dict]:
     data = load_json_file(get_user_customers_path(email), [])
-    if isinstance(data, list):
-        return data
-    return []
+    return data if isinstance(data, list) else []
 
 
 def save_customers(email: str, customers: list[dict]) -> None:
     save_json_file(get_user_customers_path(email), customers)
+
+
+def load_quotes(email: str) -> list[dict]:
+    data = load_json_file(get_user_quotes_path(email), [])
+    return data if isinstance(data, list) else []
+
+
+def save_quotes(email: str, quotes: list[dict]) -> None:
+    save_json_file(get_user_quotes_path(email), quotes)
+
+
+def add_quote_history(email: str, quote_data: dict) -> None:
+    quotes = load_quotes(email)
+    quotes.insert(0, quote_data)
+    quotes = quotes[:50]
+    save_quotes(email, quotes)
 
 
 def find_customer(customers: list[dict], naam: str) -> dict | None:
@@ -236,6 +222,7 @@ def auth_screen() -> bool:
                 save_users(users)
                 save_config(email, load_config(email))
                 save_customers(email, [])
+                save_quotes(email, [])
                 st.success("Account aangemaakt. Log nu in.")
 
     return False
@@ -504,6 +491,13 @@ def test_customer_store() -> None:
     assert any(k["naam"] == "Jan Jansen" for k in klanten)
 
 
+def test_quote_history() -> None:
+    email = "test@example.com"
+    add_quote_history(email, {"offertenummer": "OFF-1", "klantnaam": "Jan", "totaal_format": "EUR 121,00"})
+    quotes = load_quotes(email)
+    assert len(quotes) >= 1
+
+
 def test_valideer() -> None:
     data = {"bedrijfsnaam": "Test", "bedrijfsgegevens": "Straat 1", "kvk_nummer": "12345678", "klantnaam": "Jan", "klus_type": "Schilderwerk", "beschrijving": "Muren schilderen", "prijs": "1000", "btw_percentage": "21"}
     assert valideer(data) == []
@@ -517,18 +511,20 @@ def run_tests() -> None:
     test_bereken_prijzen()
     test_style_config()
     test_customer_store()
+    test_quote_history()
     test_valideer()
 
 
 run_tests()
 
-st.set_page_config(page_title="AI Offerte Generator Pro", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Offerte Generator", page_icon="📄", layout="wide")
 if not auth_screen():
     st.stop()
 
 user_email = st.session_state["user_email"]
 config = load_config(user_email)
 klanten = load_customers(user_email)
+quotes = load_quotes(user_email)
 klant_namen = [k["naam"] for k in klanten]
 
 st.markdown(
@@ -541,9 +537,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("📄 Offerte Generator v11")
+st.title("📄 Offerte Generator v12")
 st.write(f"Ingelogd als: {user_email}")
-st.write("Sneller werken met brede templates, opgeslagen klanten en professionelere offertetekst voor veel verschillende soorten bedrijven.")
+st.write("Sneller werken met brede templates, opgeslagen klanten, offertehistorie en professionelere offertetekst.")
 
 with st.sidebar:
     st.subheader("Snel starten")
@@ -571,15 +567,14 @@ with st.sidebar:
     else:
         st.warning("OpenAI package niet gevonden. Standaardtekst wordt gebruikt.")
 
-voorgeselecteerde_klus = SNEL_TEMPLATES.get(template_keuze, {}).get("klus_type", "")
-voorgeselecteerde_beschrijving = SNEL_TEMPLATES.get(template_keuze, {}).get("beschrijving", "")
-gekozen_klant = st.selectbox("Kies opgeslagen klant (optioneel)", ["Nieuwe klant"] + klant_namen)
+st.subheader("Kies opgeslagen klant (optioneel)")
+gekozen_klant = st.selectbox("Klant", ["Nieuwe klant"] + klant_namen)
 klant_defaults = find_customer(klanten, gekozen_klant) if gekozen_klant != "Nieuwe klant" else None
 
 with st.form("offerte_form"):
     st.subheader("Bedrijfsgegevens")
-    bedrijfsnaam = st.text_input("Bedrijfsnaam", value=config.get("bedrijfsnaam", ""), placeholder="Bijv. Fokke Schilderwerken")
-    bedrijfsgegevens = st.text_area("Adres / contactgegevens", value=config.get("bedrijfsgegevens", ""), placeholder="Dorpsstraat 10\n1234 AB Amsterdam\n06-12345678\ninfo@bedrijf.nl", height=120)
+    bedrijfsnaam = st.text_input("Bedrijfsnaam", value=config.get("bedrijfsnaam", ""), placeholder="Bijv. Jouw Bedrijf")
+    bedrijfsgegevens = st.text_area("Adres / contactgegevens", value=config.get("bedrijfsgegevens", ""), placeholder="Straat 10\n1234 AB Plaats\n06-12345678\ninfo@bedrijf.nl", height=120)
     c_bedrijf_1, c_bedrijf_2 = st.columns(2)
     with c_bedrijf_1:
         kvk_nummer = st.text_input("KvK-nummer", value=config.get("kvk_nummer", ""), placeholder="Bijv. 12345678")
@@ -592,8 +587,8 @@ with st.form("offerte_form"):
     klant_opslaan = st.checkbox("Sla deze klant op voor later", value=bool(klant_defaults))
 
     st.subheader("Klus")
-    klus_type = st.text_input("Type klus", value=voorgeselecteerde_klus, placeholder="Bijv. Buiten schilderwerk")
-    beschrijving = st.text_area("Beschrijving werkzaamheden", value=voorgeselecteerde_beschrijving, placeholder="Bijv. Schuren, gronden en aflakken van kozijnen en voordeur.", height=120)
+    klus_type = st.text_input("Type klus", value=SNEL_TEMPLATES.get(template_keuze, {}).get("klus_type", ""), placeholder="Bijv. Dienstverlening")
+    beschrijving = st.text_area("Beschrijving werkzaamheden", value=SNEL_TEMPLATES.get(template_keuze, {}).get("beschrijving", ""), placeholder="Beschrijf kort wat je gaat doen.", height=120)
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -604,7 +599,6 @@ with st.form("offerte_form"):
         betaaltermijn = st.number_input("Betaaltermijn in dagen", min_value=1, value=int(config.get("standaard_betaaltermijn", 14)), step=1)
 
     btw_percentage = st.selectbox("BTW-percentage", ["21", "9", "0"], index=0)
-
     submitted = st.form_submit_button("✨ Genereer professionele offerte", use_container_width=True)
 
 if save_profile:
@@ -673,7 +667,16 @@ if submitted:
             f.write(offerte)
         maak_pdf(pdf_bestand, data, offerte, logo_bytes=logo_bytes)
 
-        st.success("Offerte gegenereerd en klaar om te downloaden.")
+        add_quote_history(user_email, {
+            "offertenummer": offertenummer,
+            "datum": datum,
+            "klantnaam": klantnaam,
+            "klus_type": klus_type,
+            "totaal_format": data["totaal_format"],
+            "offerte_stijl": offerte_stijl,
+        })
+
+        st.success("Offerte gegenereerd en opgeslagen in je historie.")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Stijl", offerte_stijl)
         c2.metric("Subtotaal", data["subtotaal_format"])
@@ -684,3 +687,39 @@ if submitted:
             st.download_button("⬇️ Download als PDF", data=f.read(), file_name=pdf_bestand, mime="application/pdf", use_container_width=True)
         with st.expander("Toon offerte tekst"):
             st.text_area("Offerte tekst", offerte, height=240)
+
+st.divider()
+st.subheader("Offertehistorie")
+zoekterm = st.text_input("Zoek in offertehistorie", placeholder="Zoek op klant, offertenummer, klus of stijl")
+stijl_filter_opties = ["Alle stijlen"] + list(STYLE_PRESETS.keys())
+geselecteerde_stijl_filter = st.selectbox("Filter op stijl", stijl_filter_opties)
+
+gefilterde_quotes = quotes
+if zoekterm.strip():
+    zoek = zoekterm.strip().lower()
+    gefilterde_quotes = [
+        quote for quote in gefilterde_quotes
+        if zoek in quote.get("offertenummer", "").lower()
+        or zoek in quote.get("klantnaam", "").lower()
+        or zoek in quote.get("klus_type", "").lower()
+        or zoek in quote.get("offerte_stijl", "").lower()
+    ]
+
+if geselecteerde_stijl_filter != "Alle stijlen":
+    gefilterde_quotes = [
+        quote for quote in gefilterde_quotes
+        if quote.get("offerte_stijl", "") == geselecteerde_stijl_filter
+    ]
+
+if gefilterde_quotes:
+    st.caption(f"{len(gefilterde_quotes)} offerte(s) gevonden")
+    for quote in gefilterde_quotes[:20]:
+        with st.container(border=True):
+            col1, col2, col3, col4 = st.columns([1.3, 1.3, 1.1, 1])
+            col1.write(f"**{quote.get('offertenummer', '-')}**")
+            col2.write(quote.get("klantnaam", "-"))
+            col3.write(quote.get("totaal_format", "-"))
+            col4.write(quote.get("datum", "-"))
+            st.caption(f"{quote.get('klus_type', '-')} • {quote.get('offerte_stijl', '-')} stijl")
+else:
+    st.info("Geen offertes gevonden met deze zoekopdracht of filters.")
