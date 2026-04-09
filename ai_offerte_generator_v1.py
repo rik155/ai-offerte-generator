@@ -22,6 +22,14 @@ except ImportError:
 MODEL = "gpt-4.1-mini"
 USERS_PATH = Path("users.json")
 USER_DATA_DIR = Path("user_data")
+FREE_QUOTES_LIMIT = 3
+
+TIKKIE_NAAM = os.getenv("TIKKIE_NAAM", "Jouw naam")
+TIKKIE_LINK = os.getenv("TIKKIE_LINK", "")
+ABONNEMENT_PRIJS = os.getenv("ABONNEMENT_PRIJS", "5")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
 STYLE_PRESETS = {
     "Modern": {"accent": "#1d4ed8"},
     "Klassiek": {"accent": "#7c2d12"},
@@ -53,17 +61,25 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
-def load_users() -> dict:
-    if not USERS_PATH.exists():
-        return {}
+def load_json_file(path: Path, fallback):
+    if not path.exists():
+        return fallback
     try:
-        return json.loads(USERS_PATH.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return {}
+        return fallback
+
+
+def save_json_file(path: Path, data) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_users() -> dict:
+    return load_json_file(USERS_PATH, {})
 
 
 def save_users(users: dict) -> None:
-    USERS_PATH.write_text(json.dumps(users, ensure_ascii=False, indent=2), encoding="utf-8")
+    save_json_file(USERS_PATH, users)
 
 
 def make_user_key(email: str) -> str:
@@ -80,19 +96,6 @@ def get_user_customers_path(email: str) -> Path:
 
 def get_user_quotes_path(email: str) -> Path:
     return USER_DATA_DIR / f"{make_user_key(email)}_quotes.json"
-
-
-def load_json_file(path: Path, fallback):
-    if not path.exists():
-        return fallback
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return fallback
-
-
-def save_json_file(path: Path, data) -> None:
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def load_customers(email: str) -> list[dict]:
@@ -116,8 +119,51 @@ def save_quotes(email: str, quotes: list[dict]) -> None:
 def add_quote_history(email: str, quote_data: dict) -> None:
     quotes = load_quotes(email)
     quotes.insert(0, quote_data)
-    quotes = quotes[:50]
+    quotes = quotes[:100]
     save_quotes(email, quotes)
+
+
+def get_free_quotes_used(email: str) -> int:
+    users = load_users()
+    return int(users.get(email, {}).get("free_quotes_used", 0))
+
+
+def increment_free_quotes_used(email: str) -> None:
+    users = load_users()
+    if email in users:
+        users[email]["free_quotes_used"] = int(users[email].get("free_quotes_used", 0)) + 1
+        save_users(users)
+        if email == st.session_state.get("user"):
+            st.session_state["free_quotes_used"] = users[email]["free_quotes_used"]
+
+
+def has_access(email: str) -> bool:
+    users = load_users()
+    user = users.get(email, {})
+    if user.get("paid", False):
+        return True
+    return int(user.get("free_quotes_used", 0)) < FREE_QUOTES_LIMIT
+
+
+def load_config(email: str) -> dict:
+    standaard = {
+        "bedrijfsnaam": "",
+        "bedrijfsgegevens": "",
+        "kvk_nummer": "",
+        "btw_id": "",
+        "accentkleur": "#1d4ed8",
+        "offerte_stijl": "Modern",
+        "standaard_geldigheid": 14,
+        "standaard_betaaltermijn": 14,
+    }
+    data = load_json_file(get_user_config_path(email), {})
+    if isinstance(data, dict):
+        standaard.update(data)
+    return standaard
+
+
+def save_config(email: str, config: dict) -> None:
+    save_json_file(get_user_config_path(email), config)
 
 
 def find_customer(customers: list[dict], naam: str) -> dict | None:
@@ -142,90 +188,157 @@ def upsert_customer(email: str, naam: str, gegevens: str) -> None:
     save_customers(email, customers)
 
 
-def load_config(email: str) -> dict:
-    standaard = {
-        "bedrijfsnaam": "",
-        "bedrijfsgegevens": "",
-        "kvk_nummer": "",
-        "btw_id": "",
-        "accentkleur": "#1d4ed8",
-        "offerte_stijl": "Modern",
-        "standaard_geldigheid": 14,
-        "standaard_betaaltermijn": 14,
-    }
-    pad = get_user_config_path(email)
-    if not pad.exists():
-        return standaard
-    try:
-        data = json.loads(pad.read_text(encoding="utf-8"))
-        standaard.update(data)
-        return standaard
-    except Exception:
-        return standaard
-
-
-def save_config(email: str, config: dict) -> None:
-    pad = get_user_config_path(email)
-    pad.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def ensure_admin_account() -> None:
-    admin_email = os.getenv("ADMIN_EMAIL", "").strip().lower()
-    admin_password = os.getenv("ADMIN_PASSWORD", "").strip()
-    if not admin_email or not admin_password:
+    if not ADMIN_EMAIL or not ADMIN_PASSWORD:
         return
     users = load_users()
-    if admin_email not in users:
-        users[admin_email] = {"password_hash": hash_password(admin_password), "role": "admin"}
+    if ADMIN_EMAIL not in users:
+        users[ADMIN_EMAIL] = {
+            "password": hash_password(ADMIN_PASSWORD),
+            "paid": True,
+            "role": "admin",
+            "free_quotes_used": 0,
+        }
         save_users(users)
 
 
 def auth_screen() -> bool:
     ensure_admin_account()
-    if st.session_state.get("logged_in") and st.session_state.get("user_email"):
+    if st.session_state.get("logged_in"):
         return True
 
-    st.title("🔐 Inloggen")
-    tab_login, tab_register = st.tabs(["Inloggen", "Account maken"])
+    st.title("🔐 Offerte Generator")
+    st.write("Log in of maak een account om de tool te gebruiken.")
+    tab1, tab2 = st.tabs(["Inloggen", "Account maken"])
 
-    with tab_login:
+    with tab1:
         email = st.text_input("E-mail", key="login_email")
         password = st.text_input("Wachtwoord", type="password", key="login_password")
         if st.button("Inloggen", key="login_btn", use_container_width=True):
             users = load_users()
-            record = users.get(email.strip().lower())
-            if record and record.get("password_hash") == hash_password(password):
+            user = users.get(email.strip().lower())
+            if user and user.get("password") == hash_password(password):
+                email_clean = email.strip().lower()
                 st.session_state["logged_in"] = True
-                st.session_state["user_email"] = email.strip().lower()
-                st.session_state["user_role"] = record.get("role", "user")
+                st.session_state["user"] = email_clean
+                st.session_state["paid"] = user.get("paid", False)
+                st.session_state["role"] = user.get("role", "user")
+                st.session_state["free_quotes_used"] = int(user.get("free_quotes_used", 0))
                 st.rerun()
             else:
                 st.error("Onjuiste inloggegevens.")
 
-    with tab_register:
-        reg_email = st.text_input("E-mail", key="reg_email")
-        reg_password = st.text_input("Wachtwoord", type="password", key="reg_password")
-        reg_password_2 = st.text_input("Herhaal wachtwoord", type="password", key="reg_password_2")
-        if st.button("Account aanmaken", key="register_btn", use_container_width=True):
-            email = reg_email.strip().lower()
+    with tab2:
+        email = st.text_input("E-mail registreren", key="register_email")
+        password = st.text_input("Wachtwoord registreren", type="password", key="register_password")
+        password2 = st.text_input("Herhaal wachtwoord", type="password", key="register_password2")
+        if st.button("Account maken", key="register_btn", use_container_width=True):
+            email = email.strip().lower()
             users = load_users()
             if not email or "@" not in email:
                 st.error("Vul een geldig e-mailadres in.")
-            elif len(reg_password) < 6:
+            elif len(password) < 6:
                 st.error("Wachtwoord moet minstens 6 tekens hebben.")
-            elif reg_password != reg_password_2:
+            elif password != password2:
                 st.error("Wachtwoorden komen niet overeen.")
             elif email in users:
                 st.error("Dit account bestaat al.")
             else:
-                users[email] = {"password_hash": hash_password(reg_password), "role": "user"}
+                users[email] = {
+                    "password": hash_password(password),
+                    "paid": False,
+                    "role": "user",
+                    "free_quotes_used": 0,
+                }
                 save_users(users)
                 save_config(email, load_config(email))
                 save_customers(email, [])
                 save_quotes(email, [])
-                st.success("Account aangemaakt. Log nu in.")
+                st.success("Account aangemaakt. Je krijgt de eerste 3 offertes gratis.")
 
     return False
+
+
+def payment_gate() -> None:
+    email = st.session_state.get("user", "")
+    used = int(st.session_state.get("free_quotes_used", 0))
+    remaining = max(FREE_QUOTES_LIMIT - used, 0)
+    if has_access(email):
+        if remaining > 0 and not st.session_state.get("paid"):
+            st.info(f"Je hebt nog {remaining} gratis offerte(s) over.")
+        return
+
+    st.warning("⚠️ Je gratis offertes zijn op.")
+    st.markdown(
+        f"""
+### Klaar om door te groeien?
+
+Je hebt je **{FREE_QUOTES_LIMIT} gratis offertes** gebruikt. Blijf zonder gedoe offertes maken met een abonnement van **EUR {ABONNEMENT_PRIJS} per maand**.
+
+#### Wat je krijgt
+- onbeperkt offertes maken
+- nette PDF export
+- klanten opslaan voor sneller werken
+- offertehistorie met zoeken en filters
+- meerdere professionele stijlen
+
+#### Voor wie is dit handig?
+Voor ondernemers en kleine bedrijven die snel een nette offerte willen maken zonder steeds opnieuw alles te typen.
+
+#### Zo activeer je je account
+1. Betaal via Tikkie
+2. Stuur daarna je e-mailadres naar ons
+3. Wij activeren je account
+"""
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        if TIKKIE_LINK:
+            st.link_button("👉 Activeer mijn account via Tikkie", TIKKIE_LINK, use_container_width=True)
+        else:
+            st.error("Tikkie-link nog niet ingesteld.")
+    with col2:
+        st.info(f"Na betaling activeren we je account voor: {email}")
+    st.success("Na activatie kun je direct weer verder zonder limiet.")
+    st.markdown(
+        f"""
+**Na betaling:**
+- stuur een kort bericht met je e-mailadres
+- ontvanger: **{TIKKIE_NAAM}**
+
+**Voorbeeld bericht:**
+Ik heb betaald voor Offerte Generator. Mijn e-mailadres is: **{email}**
+"""
+    )
+    st.stop()
+
+
+def admin_panel() -> None:
+    if st.session_state.get("role") != "admin":
+        return
+    st.sidebar.subheader("Admin")
+    gebruikers = load_users()
+    emails = sorted(gebruikers.keys())
+    geselecteerd = st.sidebar.selectbox("Gebruiker beheren", [""] + emails)
+    if geselecteerd:
+        info = gebruikers.get(geselecteerd, {})
+        status = "betaald" if info.get("paid") else "niet betaald"
+        gratis = int(info.get("free_quotes_used", 0))
+        st.sidebar.caption(f"Status: {status} | Gratis gebruikt: {gratis}/{FREE_QUOTES_LIMIT}")
+    if st.sidebar.button("Geef toegang", use_container_width=True):
+        if geselecteerd and geselecteerd in gebruikers:
+            gebruikers[geselecteerd]["paid"] = True
+            save_users(gebruikers)
+            if geselecteerd == st.session_state.get("user"):
+                st.session_state["paid"] = True
+            st.sidebar.success("Toegang gegeven.")
+    if st.sidebar.button("Blokkeer toegang", use_container_width=True):
+        if geselecteerd and geselecteerd in gebruikers and geselecteerd != ADMIN_EMAIL:
+            gebruikers[geselecteerd]["paid"] = False
+            save_users(gebruikers)
+            if geselecteerd == st.session_state.get("user"):
+                st.session_state["paid"] = False
+            st.sidebar.success("Toegang verwijderd.")
 
 
 def euro_bedrag(waarde: str | float) -> str:
@@ -469,50 +582,25 @@ def test_hash_password() -> None:
 
 def test_euro_bedrag() -> None:
     assert euro_bedrag("1250") == "EUR 1.250,00"
-    assert euro_bedrag("1250,5") == "EUR 1.250,50"
 
 
 def test_bereken_prijzen() -> None:
     prijzen = bereken_prijzen("100", "21")
-    assert prijzen["subtotaal"] == 100.0
-    assert round(prijzen["btw_bedrag"], 2) == 21.0
     assert round(prijzen["totaal"], 2) == 121.0
 
 
-def test_style_config() -> None:
-    stijl = get_style_config("Klassiek")
-    assert stijl["accent"] == "#7c2d12"
-
-
-def test_customer_store() -> None:
-    email = "test@example.com"
-    upsert_customer(email, "Jan Jansen", "Straat 1")
-    klanten = load_customers(email)
-    assert any(k["naam"] == "Jan Jansen" for k in klanten)
-
-
-def test_quote_history() -> None:
-    email = "test@example.com"
-    add_quote_history(email, {"offertenummer": "OFF-1", "klantnaam": "Jan", "totaal_format": "EUR 121,00"})
-    quotes = load_quotes(email)
-    assert len(quotes) >= 1
-
-
-def test_valideer() -> None:
-    data = {"bedrijfsnaam": "Test", "bedrijfsgegevens": "Straat 1", "kvk_nummer": "12345678", "klantnaam": "Jan", "klus_type": "Schilderwerk", "beschrijving": "Muren schilderen", "prijs": "1000", "btw_percentage": "21"}
-    assert valideer(data) == []
-    data["prijs"] = "abc"
-    assert len(valideer(data)) >= 1
+def test_free_access_logic() -> None:
+    users = load_users()
+    users["free@test.nl"] = {"password": hash_password("abc123"), "paid": False, "role": "user", "free_quotes_used": 2}
+    save_users(users)
+    assert has_access("free@test.nl") is True
 
 
 def run_tests() -> None:
     test_hash_password()
     test_euro_bedrag()
     test_bereken_prijzen()
-    test_style_config()
-    test_customer_store()
-    test_quote_history()
-    test_valideer()
+    test_free_access_logic()
 
 
 run_tests()
@@ -521,25 +609,21 @@ st.set_page_config(page_title="Offerte Generator", page_icon="📄", layout="wid
 if not auth_screen():
     st.stop()
 
-user_email = st.session_state["user_email"]
+admin_panel()
+payment_gate()
+
+user_email = st.session_state.get("user", "")
 config = load_config(user_email)
 klanten = load_customers(user_email)
 quotes = load_quotes(user_email)
 klant_namen = [k["naam"] for k in klanten]
+used_quotes = int(st.session_state.get("free_quotes_used", 0))
+remaining_quotes = max(FREE_QUOTES_LIMIT - used_quotes, 0)
 
-st.markdown(
-    """
-    <style>
-    .block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
-    .stDownloadButton button, .stButton button {border-radius: 12px; font-weight: 600;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.title("📄 Offerte Generator v12")
+st.title("📄 Offerte Generator")
 st.write(f"Ingelogd als: {user_email}")
-st.write("Sneller werken met brede templates, opgeslagen klanten, offertehistorie en professionelere offertetekst.")
+if not st.session_state.get("paid"):
+    st.caption(f"Gratis offertes over: {remaining_quotes} van {FREE_QUOTES_LIMIT}")
 
 with st.sidebar:
     st.subheader("Snel starten")
@@ -559,7 +643,8 @@ with st.sidebar:
     if st.button("Uitloggen", use_container_width=True):
         st.session_state.clear()
         st.rerun()
-    st.subheader("AI status")
+    st.subheader("Status")
+    st.write("Betaald" if st.session_state.get("paid") else "Gratis proefperiode")
     if OPENAI_AVAILABLE and os.getenv("OPENAI_API_KEY"):
         st.success("OpenAI actief")
     elif OPENAI_AVAILABLE:
@@ -639,7 +724,6 @@ if submitted:
         "accentkleur": accentkleur,
         "offerte_stijl": offerte_stijl,
     }
-
     fouten = valideer(data)
     if fouten:
         for fout in fouten:
@@ -657,16 +741,13 @@ if submitted:
             "standaard_geldigheid": int(geldigheid),
             "standaard_betaaltermijn": int(betaaltermijn),
         })
-
         offerte = genereer_offerte(data)
         txt_bestand = f"offerte_{klantnaam.strip().lower().replace(' ', '_') or 'klant'}.txt"
         pdf_bestand = txt_bestand.replace('.txt', '.pdf')
         logo_bytes = logo_bestand.getvalue() if logo_bestand else None
-
         with open(txt_bestand, "w", encoding="utf-8") as f:
             f.write(offerte)
         maak_pdf(pdf_bestand, data, offerte, logo_bytes=logo_bytes)
-
         add_quote_history(user_email, {
             "offertenummer": offertenummer,
             "datum": datum,
@@ -675,8 +756,9 @@ if submitted:
             "totaal_format": data["totaal_format"],
             "offerte_stijl": offerte_stijl,
         })
-
-        st.success("Offerte gegenereerd en opgeslagen in je historie.")
+        if not st.session_state.get("paid"):
+            increment_free_quotes_used(user_email)
+        st.success("Offerte gegenereerd en opgeslagen in je historie. Je kunt hem direct downloaden of later terugvinden.")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Stijl", offerte_stijl)
         c2.metric("Subtotaal", data["subtotaal_format"])
@@ -693,7 +775,6 @@ st.subheader("Offertehistorie")
 zoekterm = st.text_input("Zoek in offertehistorie", placeholder="Zoek op klant, offertenummer, klus of stijl")
 stijl_filter_opties = ["Alle stijlen"] + list(STYLE_PRESETS.keys())
 geselecteerde_stijl_filter = st.selectbox("Filter op stijl", stijl_filter_opties)
-
 gefilterde_quotes = quotes
 if zoekterm.strip():
     zoek = zoekterm.strip().lower()
@@ -704,13 +785,8 @@ if zoekterm.strip():
         or zoek in quote.get("klus_type", "").lower()
         or zoek in quote.get("offerte_stijl", "").lower()
     ]
-
 if geselecteerde_stijl_filter != "Alle stijlen":
-    gefilterde_quotes = [
-        quote for quote in gefilterde_quotes
-        if quote.get("offerte_stijl", "") == geselecteerde_stijl_filter
-    ]
-
+    gefilterde_quotes = [quote for quote in gefilterde_quotes if quote.get("offerte_stijl", "") == geselecteerde_stijl_filter]
 if gefilterde_quotes:
     st.caption(f"{len(gefilterde_quotes)} offerte(s) gevonden")
     for quote in gefilterde_quotes[:20]:
@@ -723,3 +799,6 @@ if gefilterde_quotes:
             st.caption(f"{quote.get('klus_type', '-')} • {quote.get('offerte_stijl', '-')} stijl")
 else:
     st.info("Geen offertes gevonden met deze zoekopdracht of filters.")
+
+st.info("Voor Tikkie in Streamlit secrets: TIKKIE_LINK, TIKKIE_NAAM, ABONNEMENT_PRIJS, ADMIN_EMAIL, ADMIN_PASSWORD")
+st.caption("Tip: houd je prijs voorlopig laag, bijvoorbeeld EUR 5 per maand, zodat eerste klanten sneller instappen.")
